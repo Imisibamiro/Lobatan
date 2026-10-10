@@ -1,0 +1,120 @@
+name: Radio live listen
+
+# Started hourly by an external scheduler.
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Who started the run (set by the scheduler)"
+        required: false
+        default: "manual"
+        type: string
+      cron:
+        description: "Scheduler cron (set by the scheduler)"
+        required: false
+        default: ""
+        type: string
+      dispatched_at:
+        description: "Dispatch time (set by the scheduler)"
+        required: false
+        default: ""
+        type: string
+      duration_minutes:
+        description: "Minutes each shard listens"
+        required: false
+        default: "55"
+        type: string
+      shards:
+        description: "Number of shards (1-6)"
+        required: false
+        default: "6"
+        type: string
+      max_watch:
+        description: "Limit watch stations per shard (0 = all; smoke runs)"
+        required: false
+        default: "0"
+        type: string
+      max_world:
+        description: "Limit worldwide stations per shard (0 = all; smoke runs)"
+        required: false
+        default: "0"
+        type: string
+      world:
+        description: "Listen to worldwide Radio Browser stations too"
+        required: false
+        default: "true"
+        type: string
+      world_filter:
+        description: "Station filter: focused, rest, or empty for all"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: radio-listen
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.s.outputs.shards }}
+      list: ${{ steps.s.outputs.list }}
+    steps:
+      - id: s
+        run: |
+          n="${{ inputs.shards || '6' }}"
+          case "$n" in 1|2|3|4|5|6) ;; *) n=6 ;; esac
+          echo "shards=$n" >> "$GITHUB_OUTPUT"
+          echo "list=[$(seq -s, 0 $((n-1)))]" >> "$GITHUB_OUTPUT"
+
+  listen:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.list) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: Imisibamiro/lobatan-core
+          ssh-key: ${{ secrets.SRC_KEY }}
+          path: src
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Today's Radio Browser list (cached for the day)
+        id: day
+        run: echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: .cache/rb-world.json.*
+          key: rb-world-${{ steps.day.outputs.day }}-${{ matrix.shard }}
+
+      - name: Listen
+        env:
+          RADIO_ADMIN_TOKEN: ${{ secrets.RADIO_ADMIN_TOKEN }}
+          RADIO_API_URL: ${{ secrets.RADIO_API_URL }}
+          SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ needs.plan.outputs.shards }}
+          DURATION_MINUTES: ${{ inputs.duration_minutes || '55' }}
+          MAX_WATCH: ${{ inputs.max_watch || '0' }}
+          MAX_WORLD: ${{ inputs.max_world || '0' }}
+          WORLD: ${{ inputs.world || 'true' }}
+          WORLD_FILTER: ${{ inputs.world_filter || '' }}
+          LISTENER_ID: github
+          CONCURRENCY: "200"
+          UV_THREADPOOL_SIZE: "32"
+          WORLD_CACHE: .cache/rb-world.json
+        run: |
+          mkdir -p .cache
+          node src/scripts/radio-listen.mjs
