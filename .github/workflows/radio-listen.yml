@@ -49,12 +49,17 @@ on:
         required: false
         default: ""
         type: string
+      feed_set:
+        description: "Station list: empty = normal, or a named list"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: radio-listen
+  group: radio-listen-${{ inputs.feed_set || 'main' }}
   cancel-in-progress: false
 
 jobs:
@@ -111,7 +116,8 @@ jobs:
           MAX_WORLD: ${{ inputs.max_world || '0' }}
           WORLD: ${{ inputs.world || 'true' }}
           WORLD_FILTER: ${{ inputs.world_filter || '' }}
-          LISTENER_ID: github
+          FEED_SET: ${{ inputs.feed_set || '' }}
+          LISTENER_ID: ${{ inputs.feed_set && 'github-sweep' || 'github' }}
           CONCURRENCY: "200"
           UV_THREADPOOL_SIZE: "32"
           WORLD_CACHE: .cache/rb-world.json
